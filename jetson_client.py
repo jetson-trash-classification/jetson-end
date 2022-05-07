@@ -1,26 +1,28 @@
+import json
 import jetson.inference, jetson.utils
 from enum import Enum
 import RPi.GPIO as GPIO
 import time, requests, datetime
 
-post_url = "http://192.168.137.1:3001/jetson"
+host_url = "http://192.168.137.1:3001/settings"
 position = "rKkwZHirl27G3XxrP62_s"
 type_list = ["food", "residual", "hazardous", "recycle", "sensor"]
 
+
 class jetson_state(Enum):
-    IDEL =  1  # 空闲状态
+    IDEL = 1  # 空闲状态
     WAKEUP = 2  # 摄像头开启
     SLEEP = 3  # 摄像头关闭
     WORK = 4  # 拍照，识别，上传
 
 
-    
-# 引脚定义    
+# 引脚定义
 pin_food = 31
 pin_residual = 33
 pin_hazardous = 35
 pin_recycle = 37
 pin_sensor = 29
+
 
 def get_curtime():
     """
@@ -30,12 +32,13 @@ def get_curtime():
     time_str = datetime.datetime.strftime(cur_time, "%Y-%m-%d %H:%M:%S")
     return time_str
 
+
 def post_data(type, accuracy):
     """
     发送数据
     """
     r = requests.post(
-        url=post_url,
+        url=host_url,
         data={
             time: get_curtime(),
             position: position,
@@ -49,6 +52,7 @@ def post_data(type, accuracy):
     else:
         print("Data submit err...")
 
+
 def gpio_init():
     """
     初始化GPIO引脚
@@ -60,12 +64,12 @@ def gpio_init():
     # GPIO输出引脚全部置低电平
     for pin_out in pin_out_list:
         GPIO.output(pin_out, GPIO.LOW)
-    print('GPIO INIT done...')
+
 
 def open_lid(lid):
-    '''
+    """
     选择一个垃圾盖子打开
-    '''
+    """
     GPIO.output(lid, GPIO.HIGH)
     time.sleep(10)
     GPIO.output(lid, GPIO.LOW)
@@ -76,24 +80,20 @@ class jetson_client:
         # 设置初始状态
         self.state = jetson_state.IDEL
 
-        # 初始化jetson 参数
-        self.capacityRate = 0.0
-        self.totalCapacity = 10
-        self.curCapacitity = 0
-        self.closeOnFull = False
-        self.alertOnFull = False
-        self.residual = True
-        self.hazardous = True
-        self.food = True
-        self.recyclable = True
-
         # 创建网络
         try:
             self.net = jetson.inference.imageNet("googlenet")
         except Exception as e:
             print(str(e))
 
+        # 初始化jetson 参数
+        res = requests.get(host_url, data="rKkwZHirl27G3XxrP62_s")
+        res = json.loads(res.text)
+        self.data = res
+        print('Jetson data init done...') 
+        
         gpio_init()  # 初始化GPIO引脚
+        print("GPIO init done...")
 
     def main_task(self):
         """
@@ -121,10 +121,10 @@ class jetson_client:
                     img = self.camera.Capture()
                     class_id, accuracy = self.net.Classify(img)
                     # 提交数据
-                    post_data(class_id, accuracy) 
+                    post_data(class_id, accuracy)
                     # 修改当前容量
-                    self.curCapacitity += 1
-                    self.capacityRate = self.curCapacitity/self.totalCapacity
+                    self.data['data']['curCapacitity'] += 1
+                    self.data['data']['capacityRate'] = self.data['data']['curCapacitity'] / self.data['data']['totalCapacity']
                     open_lid(class_id)
 
             elif self.state is jetson_state.SLEEP:
@@ -133,3 +133,5 @@ class jetson_client:
 
     def __del__(self):
         GPIO.cleanup()  # cleanup all GPIOs
+
+test = jetson_client()
