@@ -60,6 +60,7 @@ def gpio_init():
     # GPIO输出引脚全部置低电平
     for pin_out in pin_out_list:
         GPIO.output(pin_out, GPIO.LOW)
+    print('GPIO INIT done...')
 
 def open_lid(lid):
     '''
@@ -119,7 +120,11 @@ class jetson_client:
                 else:
                     img = self.camera.Capture()
                     class_id, accuracy = self.net.Classify(img)
-                    post_data(class_id, accuracy)
+                    # 提交数据
+                    post_data(class_id, accuracy) 
+                    # 修改当前容量
+                    self.curCapacitity += 1
+                    self.capacityRate = self.curCapacitity/self.totalCapacity
                     open_lid(class_id)
 
             elif self.state is jetson_state.SLEEP:
