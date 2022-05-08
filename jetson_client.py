@@ -48,9 +48,9 @@ def post_data(type, accuracy):
     )
 
     if r.status_code is 200:
-        print("Data submit done...")
+        print("Post done...")
     else:
-        print("Data submit err...")
+        print("Post err...")
 
 
 def gpio_init():
@@ -79,28 +79,46 @@ class jetson_client:
     def __init__(self) -> None:
         # 设置初始状态
         self.state = jetson_state.IDEL
-
+        
         # 创建网络
         try:
             self.net = jetson.inference.imageNet("googlenet")
+            print("Net create done...")
         except Exception as e:
-            print(str(e))
-
-        # 初始化jetson 参数
-        res = requests.get(host_url, data="rKkwZHirl27G3XxrP62_s")
-        res = json.loads(res.text)
-        self.data = res
-        print('Jetson data init done...') 
+            print('Net create err: %s'%(str(e)))
         
-        gpio_init()  # 初始化GPIO引脚
-        print("GPIO init done...")
+        # 初始化GPIO引脚
+        try:
+            gpio_init()  
+            print("GPIO init done...")
+        except Exception as e:
+            print('GPIO init err: %s'%(str(e)))
 
-    def main_task(self):
+        # 初始化设置
+        try:
+            res = requests.get(host_url, data="rKkwZHirl27G3XxrP62_s")
+            res = json.loads(res.text)
+            self.data = res
+            print("Settings init done...")
+        except Exception as e:
+            print('Get err: %s'%(str(e)))
+
+    def run(self):
         """
         jetson主进程,
         输入: 当前的红外传感器值
         """
         while True:
+            # 获取最新的设置
+            try:
+                res = requests.get(host_url, data="rKkwZHirl27G3XxrP62_s")
+                res = json.loads(res.text)
+                for key, value in res['data'].items():
+                    if self.data['data'][key] != value:
+                        print('Settings %s update to %s...'%(key, value))
+                        self.data['data'][key] = value
+            except Exception as e:
+                print('Get error: %s'%(str(e)))
 
             # 获取传感器最新的输入
             input = GPIO.input(pin_sensor)
@@ -133,5 +151,3 @@ class jetson_client:
 
     def __del__(self):
         GPIO.cleanup()  # cleanup all GPIOs
-
-test = jetson_client()
