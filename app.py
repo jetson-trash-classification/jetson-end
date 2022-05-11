@@ -172,6 +172,9 @@ class jetson_client(threading.Thread):
         )
         open_lid(class_id)
 
+    def destroy_camera(self):
+        del self.camera
+
     def err(self):
         pass
 
