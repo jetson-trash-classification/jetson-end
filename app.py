@@ -1,5 +1,5 @@
 from queue import Queue
-import web, json, threading
+import web, json, threading, sys
 import json
 import jetson.inference, jetson.utils
 from enum import Enum
@@ -108,7 +108,16 @@ class jetson_client(threading.Thread):
     def init_net(self):
         # 创建网络
         try:
-            self.net = jetson.inference.imageNet("googlenet")
+            print(sys.argv)
+            self.net = jetson.inference.imageNet(
+                "resnet18",
+                [
+                    "--model=/home/hgg/jetson-inference/python/training/classification/models/trash/resnet18.onnx", 
+                    "--input_blob=input_0",
+                    "--output_blob=output_0",
+                    "--labels=/home/hgg/jetson-inference/python/training/classification/data/trash/label.txt"
+                ]
+            )
             print("Net create done...")
         except Exception as e:
             print("Net create err: %s" % (str(e)))
