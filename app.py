@@ -1,4 +1,6 @@
+from asyncio.windows_events import NULL
 from queue import Queue
+import random
 import web, json, threading, sys
 import json
 import jetson.inference, jetson.utils
@@ -27,8 +29,14 @@ pin_hazardous = 35
 pin_recyclable = 37
 pin_sensor = 29
 
+# 共享队列
 que = Queue()
 
+# 结果和引脚的映射
+lid_map = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
+
+# 是否使用相机
+use_camera = False
 
 def get_curtime():
     """
@@ -58,27 +66,17 @@ def post_data(type, accuracy):
     )
 
     if r.status_code is 200:
-        print("Post done with state code 200...")
+        print("@jetson: Post done with state code 200...")
     else:
-        print("Post err with state code %d..."%(r.status_code))
-
-
-def open_lid(lid):
-    """
-    选择一个垃圾盖子打开
-    """
-    lid_map = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
-    lid = lid_map[lid]
-    GPIO.output(lid, GPIO.HIGH)
-    for i in range(5):
-        print("Lid %d open %ds ...."%(lid, i))
-        time.sleep(1)
-    GPIO.output(lid, GPIO.LOW)
+        print("@jetson: Post err with state code %d..."%(r.status_code))
 
 
 class jetson_client(threading.Thread):
     def __init__(self) -> None:
         threading.Thread.__init__(self)
+
+        # 当前打开的盖子
+        self.cur_lid = -1
 
         # 设置状态表
         self.state_tlb = {
@@ -112,6 +110,28 @@ class jetson_client(threading.Thread):
         self.init_net()
         self.init_gpio()
         self.init_settings()
+        print("Jetson end init OK...")
+
+    def open_lid(self):
+        """
+        选择一个垃圾盖子打开
+        """
+        if self.cur_lid == -1:
+            return
+        
+        GPIO.output(self.cur_lid, GPIO.HIGH)
+        for i in range(5):
+            print("@jetson: Lid %d open %ds ...."%(self.cur_lid, i))
+            time.sleep(1)
+
+    def close_lid(self):
+        """
+        关闭垃圾盖子
+        """
+        if self.cur_lid == -1:
+            return
+        GPIO.output(self.cur_lid, GPIO.LOW)
+        print("@jetson: Lid %d close..."%(self.cur_lid))
 
     def init_net(self):
         # 创建网络
@@ -126,9 +146,9 @@ class jetson_client(threading.Thread):
                     "--labels=/home/hgg/jetson-inference/python/training/classification/data/trash/label.txt",
                 ],
             )
-            print("Net create done...")
+            print("@jetson: Net create done...")
         except Exception as e:
-            print("Net create err: %s" % (str(e)))
+            print("@jetson: Net create err: %s" % (str(e)))
 
     def init_gpio(self):
         """
@@ -142,9 +162,9 @@ class jetson_client(threading.Thread):
             # GPIO输出引脚全部置低电平
             for pin_out in pin_out_list:
                 GPIO.output(pin_out, GPIO.LOW)
-            print("GPIO init done...")
+            print("@jetson: GPIO init done...")
         except Exception as e:
-            print("GPIO init err: %s" % (str(e)))
+            print("@jetson: GPIO init err: %s" % (str(e)))
 
     def init_settings(self):
         # 初始化设置
@@ -152,9 +172,9 @@ class jetson_client(threading.Thread):
             res = requests.get(host_url + "settings", data="rKkwZHirl27G3XxrP62_s")
             res = json.loads(res.text)
             self.data = res
-            print("Settings init done...")
+            print("@jetson: Settings init done...")
         except Exception as e:
-            print("Get err: %s" % (str(e)))
+            print("@jetson: Get err: %s" % (str(e)))
 
     def handle_input(self):
         # 获取最新的设置
@@ -162,27 +182,53 @@ class jetson_client(threading.Thread):
             res = que.get()
             for key, value in res["data"].items():
                 if self.data["data"][key] != value:
-                    print("Settings %s update to %s..." % (key, value))
+                    print("@jetson: Settings %s update to %s..." % (key, value))
                     self.data["data"][key] = value
 
     def wake_up(self):
         """'
         Create the Camera instance
         """
-        print("Enter wake up state...")
+        print("@jetson: Enter wake up state...")
         try:
-            self.camera = jetson.utils.videoSource("csi://0")
+            # self.camera = jetson.utils.videoSource("csi://0")
+            pass
         except Exception as e:
             print("Camera create err: %s" % (str(e)))
-        print("Exit wake up state...")
+        print("@jetson: Exit wake up state...")
+
+    def is_full(self):
+        # 判断垃圾桶是否装满
+        return self.data["data"]["curCapacitity"] == self.data["data"]["totalCapacity"]
+
+    def set_cur_lid(self, class_id):
+        self.cur_lid = lid_map[class_id]
+    
+    def clear_cur_lid(self):
+        self.cur_lid = -1
 
     def work(self):
         """'
         拍照，识别并上传
         """
-        print("Enter work state...")
-        img = self.camera.Capture()
-        class_id, accuracy = self.net.Classify(img)
+        print("@jetson: Enter work state...")
+        # img = self.camera.Capture()
+        # class_id, accuracy = self.net.Classify(img)
+        class_id = random.randint(0, 3)
+        accuracy = random.random()
+        type = type_list[class_id]
+        # 如果精确度太低，则不认为是垃圾
+        if accuracy < 0.5 :
+            print("@jetson: No trash detect, eixt...")
+            return
+        # 如果垃圾桶已满，则无法加入
+        if self.is_full():
+            print("@jetson: Trash class %s is full..."%(type))
+            return 
+        # 如果当前不支持装该垃圾，则退出
+        if not self.data['data'][type]:
+            print("@jetson: Trash class %s not supported..."%(type))
+            return 
         # 提交数据
         post_data(class_id, accuracy)
         # 修改当前容量
@@ -190,13 +236,16 @@ class jetson_client(threading.Thread):
         self.data["data"]["capacityRate"] = (
             self.data["data"]["curCapacity"] / self.data["data"]["totalCapacity"]
         )
-        open_lid(class_id)
-        print("Exit work state...")
+        self.set_cur_lid(class_id)
+        self.open_lid()
+        print("@jetson: Exit work state...")
 
     def sleep(self):
-        print("Enter sleep state...")
+        print("@jetson: Enter sleep state...")
+        self.close_lid()
+        self.clear_cur_lid()
         del self.camera
-        print("Exit sleep state...")
+        print("@jetson: Exit sleep state...")
 
     def err(self):
         pass
