@@ -6,11 +6,11 @@ from enum import Enum
 import RPi.GPIO as GPIO
 import time, requests, datetime
 
-host_url = "http://192.168.137.1:3001/settings"  # 主机所在ip
+host_url = "http://192.168.137.1:3001/"  # 主机所在ip
 position = "rKkwZHirl27G3XxrP62_s"  # jetson id
 
 # 引脚种类
-type_list = ["food", "residual", "hazardous", "recycle", "sensor"]
+type_list = ["food", "residual", "hazardous", "recyclable", "sensor"]
 
 
 class jetson_state(Enum):
@@ -24,7 +24,7 @@ class jetson_state(Enum):
 pin_food = 31
 pin_residual = 33
 pin_hazardous = 35
-pin_recycle = 37
+pin_recyclable = 37
 pin_sensor = 29
 
 que = Queue()
@@ -43,28 +43,36 @@ def post_data(type, accuracy):
     """
     发送数据
     """
+    header = {
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "time": get_curtime(),
+        "position": position,
+        "type": type_list[type],
+        "accuracy": accuracy,
+    }
     r = requests.post(
-        url=host_url,
-        data={
-            time: get_curtime(),
-            position: position,
-            type: type_list[type],
-            accuracy: accuracy,
-        },
+        url=host_url + "history", data=json.dumps(data), headers=header, timeout=6
     )
 
     if r.status_code is 200:
-        print("Post done...")
+        print("Post done with state code 200...")
     else:
-        print("Post err...")
+        print("Post err with state code %d..."%(r.status_code))
 
 
 def open_lid(lid):
     """
     选择一个垃圾盖子打开
     """
+    lid_map = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
+    lid = lid_map[lid]
     GPIO.output(lid, GPIO.HIGH)
-    time.sleep(10)
+    for i in range(5):
+        print("Lid %d open %ds ...."%(lid, i))
+        time.sleep(1)
     GPIO.output(lid, GPIO.LOW)
 
 
@@ -79,8 +87,8 @@ class jetson_client(threading.Thread):
                 GPIO.LOW: jetson_state.IDEL,
             },
             jetson_state.WAKEUP: {
-                GPIO.HIGH: jetson_state.WAKEUP,
-                GPIO.LOW: jetson_state.WAKEUP,
+                GPIO.HIGH: jetson_state.WORK,
+                GPIO.LOW: jetson_state.SLEEP,
             },
             jetson_state.WORK: {
                 GPIO.HIGH: jetson_state.WORK,
@@ -94,10 +102,10 @@ class jetson_client(threading.Thread):
 
         # 设置函数表
         self.func_tlb = {
-            jetson_state.IDEL: self.silence,
-            jetson_state.WAKEUP: self.create_camera,
-            jetson_state.WORK: self.capture,
-            jetson_state.SLEEP: self.destroy_camera,
+            jetson_state.IDEL: self.idel,
+            jetson_state.WAKEUP: self.wake_up,
+            jetson_state.WORK: self.work,
+            jetson_state.SLEEP: self.sleep,
         }
 
         self.state = jetson_state.IDEL  # 设置初始状态
@@ -112,11 +120,11 @@ class jetson_client(threading.Thread):
             self.net = jetson.inference.imageNet(
                 "resnet18",
                 [
-                    "--model=/home/hgg/jetson-inference/python/training/classification/models/trash/resnet18.onnx", 
+                    "--model=/home/hgg/jetson-inference/python/training/classification/models/trash/resnet18.onnx",
                     "--input_blob=input_0",
                     "--output_blob=output_0",
-                    "--labels=/home/hgg/jetson-inference/python/training/classification/data/trash/label.txt"
-                ]
+                    "--labels=/home/hgg/jetson-inference/python/training/classification/data/trash/label.txt",
+                ],
             )
             print("Net create done...")
         except Exception as e:
@@ -127,7 +135,7 @@ class jetson_client(threading.Thread):
         初始化GPIO引脚
         """
         try:
-            pin_out_list = [pin_food, pin_residual, pin_hazardous, pin_residual]
+            pin_out_list = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
             GPIO.setmode(GPIO.BOARD)  # BOARD pin-numbering scheme
             GPIO.setup(pin_out_list, GPIO.OUT)
             GPIO.setup(pin_sensor, GPIO.IN)
@@ -141,7 +149,7 @@ class jetson_client(threading.Thread):
     def init_settings(self):
         # 初始化设置
         try:
-            res = requests.get(host_url, data="rKkwZHirl27G3XxrP62_s")
+            res = requests.get(host_url + "settings", data="rKkwZHirl27G3XxrP62_s")
             res = json.loads(res.text)
             self.data = res
             print("Settings init done...")
@@ -157,37 +165,43 @@ class jetson_client(threading.Thread):
                     print("Settings %s update to %s..." % (key, value))
                     self.data["data"][key] = value
 
-    def create_camera(self):
+    def wake_up(self):
         """'
         Create the Camera instance
         """
+        print("Enter wake up state...")
         try:
-            self.camera = jetson.utils.videoSource("/dev/video0")
+            self.camera = jetson.utils.videoSource("csi://0")
         except Exception as e:
             print("Camera create err: %s" % (str(e)))
+        print("Exit wake up state...")
 
-    def capture(self):
+    def work(self):
         """'
         拍照，识别并上传
         """
+        print("Enter work state...")
         img = self.camera.Capture()
         class_id, accuracy = self.net.Classify(img)
         # 提交数据
         post_data(class_id, accuracy)
         # 修改当前容量
-        self.data["data"]["curCapacitity"] += 1
+        self.data["data"]["curCapacity"] += 1
         self.data["data"]["capacityRate"] = (
-            self.data["data"]["curCapacitity"] / self.data["data"]["totalCapacity"]
+            self.data["data"]["curCapacity"] / self.data["data"]["totalCapacity"]
         )
         open_lid(class_id)
+        print("Exit work state...")
 
-    def destroy_camera(self):
+    def sleep(self):
+        print("Enter sleep state...")
         del self.camera
+        print("Exit sleep state...")
 
     def err(self):
         pass
 
-    def silence(self):
+    def idel(self):
         pass
 
     def run(self):
