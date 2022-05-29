@@ -1,4 +1,3 @@
-from asyncio.windows_events import NULL
 from queue import Queue
 import random
 import web, json, threading, sys
@@ -62,7 +61,7 @@ def post_data(type, accuracy):
         "accuracy": accuracy,
     }
     r = requests.post(
-        url=host_url + "history", data=json.dumps(data), headers=header, timeout=6
+        url=host_url + "history", data=json.dumps(data), headers=header, timeout=60
     )
 
     if r.status_code is 200:
@@ -77,6 +76,7 @@ class jetson_client(threading.Thread):
 
         # 当前打开的盖子
         self.cur_lid = -1
+        self.last_lid = -1
 
         # 设置状态表
         self.state_tlb = {
@@ -116,6 +116,9 @@ class jetson_client(threading.Thread):
         """
         选择一个垃圾盖子打开
         """
+        if self.last_lid != -1 and self.last_lid != self.cur_lid:
+            GPIO.output(self.last_lid, GPIO.LOW)
+
         if self.cur_lid == -1:
             return
         
@@ -126,7 +129,7 @@ class jetson_client(threading.Thread):
 
     def close_lid(self):
         """
-        关闭垃圾盖子
+        关闭所有垃圾盖子，只有在退出时调用，如果是切换则调用open_lid
         """
         if self.cur_lid == -1:
             return
@@ -190,44 +193,51 @@ class jetson_client(threading.Thread):
         Create the Camera instance
         """
         print("@jetson: Enter wake up state...")
-        try:
-            # self.camera = jetson.utils.videoSource("csi://0")
-            pass
-        except Exception as e:
-            print("Camera create err: %s" % (str(e)))
+        if use_camera:
+            try:
+                self.camera = jetson.utils.videoSource("csi://0")
+            except Exception as e:
+                print("Camera create err: %s" % (str(e)))
         print("@jetson: Exit wake up state...")
 
     def is_full(self):
         # 判断垃圾桶是否装满
-        return self.data["data"]["curCapacitity"] == self.data["data"]["totalCapacity"]
+        return self.data["data"]["curCapacity"] == self.data["data"]["totalCapacity"]
 
     def set_cur_lid(self, class_id):
+        self.last_lid = self.cur_lid
         self.cur_lid = lid_map[class_id]
     
     def clear_cur_lid(self):
         self.cur_lid = -1
+        self.last_lid = -1
 
     def work(self):
         """'
         拍照，识别并上传
         """
         print("@jetson: Enter work state...")
-        # img = self.camera.Capture()
-        # class_id, accuracy = self.net.Classify(img)
-        class_id = random.randint(0, 3)
-        accuracy = random.random()
+        if use_camera:
+            img = self.camera.Capture()
+            class_id, accuracy = self.net.Classify(img)
+        else:
+            class_id = random.randint(0, 3)
+            accuracy = random.random()
         type = type_list[class_id]
         # 如果精确度太低，则不认为是垃圾
         if accuracy < 0.5 :
             print("@jetson: No trash detect, eixt...")
+            print("@jetson: Exit work state...")
             return
         # 如果垃圾桶已满，则无法加入
         if self.is_full():
             print("@jetson: Trash class %s is full..."%(type))
+            print("@jetson: Exit work state...")
             return 
         # 如果当前不支持装该垃圾，则退出
         if not self.data['data'][type]:
             print("@jetson: Trash class %s not supported..."%(type))
+            print("@jetson: Exit work state...")
             return 
         # 提交数据
         post_data(class_id, accuracy)
