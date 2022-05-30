@@ -35,7 +35,7 @@ que = Queue()
 lid_map = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
 
 # 是否使用相机
-use_camera = False
+use_camera = True
 
 def get_curtime():
     """
@@ -226,16 +226,22 @@ class jetson_client(threading.Thread):
         type = type_list[class_id]
         # 如果精确度太低，则不认为是垃圾
         if accuracy < 0.5 :
+            self.close_lid()
+            self.clear_cur_lid()
             print("@jetson: No trash detect, eixt...")
             print("@jetson: Exit work state...")
             return
         # 如果垃圾桶已满，则无法加入
         if self.is_full():
+            self.close_lid()
+            self.clear_cur_lid()
             print("@jetson: Trash class %s is full..."%(type))
             print("@jetson: Exit work state...")
             return 
         # 如果当前不支持装该垃圾，则退出
         if not self.data['data'][type]:
+            self.close_lid()
+            self.clear_cur_lid()
             print("@jetson: Trash class %s not supported..."%(type))
             print("@jetson: Exit work state...")
             return 
