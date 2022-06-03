@@ -22,11 +22,11 @@ class jetson_state(Enum):
 
 # 引脚定义
 pin_food = 31
-pin_hazardous = 33
-pin_recyclable = 35
-pin_residual = 37
+pin_recyclable = 33
+pin_residual = 35
+pin_hazardous = 37
 pin_sensor = 29
-pin_button = 23
+pin_button = 21
 
 pin_out_list = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
 pin_in_list = [pin_sensor]
@@ -35,7 +35,7 @@ pin_in_list = [pin_sensor]
 que = Queue()
 
 # 结果和引脚的映射
-lid_map = [pin_food, pin_residual, pin_hazardous, pin_recyclable]
+lid_map = [pin_food, pin_hazardous, pin_recyclable, pin_residual]
 
 
 def get_curtime():
@@ -161,13 +161,13 @@ class JetsonClient(threading.Thread):
         """
         if self.last_lid != -1:
             GPIO.output(self.last_lid, GPIO.LOW)
-            self.last_lid = -1
             print("Lid %d close..." % (self.last_lid))
+            self.last_lid = -1
 
         if self.cur_lid != -1:
             GPIO.output(self.cur_lid, GPIO.LOW)
-            self.cur_lid = -1
             print("Lid %d close..." % (self.cur_lid))
+            self.cur_lid = -1
 
     def init_net(self):
         # 创建网络
@@ -175,7 +175,7 @@ class JetsonClient(threading.Thread):
             self.net = jetson.inference.imageNet(
                 "resnet18",
                 [
-                    "--model=/home/hgg/jetson-inference/python/training/classification/models/r50/resnet18.onnx",
+                    "--model=/home/hgg/jetson-inference/python/training/classification/models/r50t3/resnet18.onnx",
                     "--input_blob=input_0",
                     "--output_blob=output_0",
                     "--labels=/home/hgg/jetson-inference/python/training/classification/data/label2.txt",
@@ -196,9 +196,13 @@ class JetsonClient(threading.Thread):
             GPIO.output(pin_out_list, GPIO.LOW)
 
             # 设置按钮
-            GPIO.setup(pin_button, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-            GPIO.add_event_detect(pin_button, GPIO.RISING)  # 在通道上添加上升临界值检测
-            GPIO.add_event_callback(pin_button, lambda x: self.clear_capacity())
+            GPIO.setup(pin_button, GPIO.IN)
+            GPIO.add_event_detect(
+                pin_button,
+                GPIO.RISING,
+                callback=lambda x: self.clear_capacity(),
+                bouncetime=500,
+            )
             print("GPIO init done...")
         except Exception as e:
             print("GPIO init err: %s" % (str(e)))
@@ -239,11 +243,13 @@ class JetsonClient(threading.Thread):
 
     def get_result(self):
         """
-        捕捉100张图片, 统计出现频率最高的
+        捕捉30张图片, 统计出现频率最高的
         """
-        num = 100  # 捕捉100张图片
+        num = 30  # 捕捉30张图片
         accuracy_sum = [0, 0, 0, 0]
         res_list = [0, 0, 0, 0]
+
+        time.sleep(3)
 
         for i in range(num):
             img = self.camera.Capture()
