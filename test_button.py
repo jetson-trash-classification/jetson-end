@@ -1,26 +1,15 @@
-import RPi.GPIO as GPIO
-GPIO.setmode(GPIO.BOARD)  # BOARD pin-numbering scheme
-pin_food = 31
-pin_residual = 33
-pin_hazardous = 35
-pin_recyclable = 37
-pin_sensor = 29
-pin_button = 23
+import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
 
-class A:
-    def __init__(self):
-        self.a = 0
-        GPIO.cleanup()
-        GPIO.setmode(GPIO.BOARD)
-        GPIO.setup(pin_button, GPIO.IN)
-        GPIO.add_event_detect(pin_button, GPIO.FALLING,bouncetime=500)
-        GPIO.add_event_callback(pin_button, lambda x: self.callback())
-        print("init done...")
+def button_callback(channel):
+    print("Button was pushed!")
+    # GPIO.setup(23, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) # Set pin 23 to be an input pin and set initial value to be pulled low (off)
 
-    def callback(self):
-        self.a += 1
-        print(self.a)
+GPIO.cleanup() # Clean up
+GPIO.setwarnings(False) # Ignore warning for now
+GPIO.setmode(GPIO.BOARD) # Use physical pin numbering
+GPIO.setup(23, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) # Set pin 23 to be an input pin and set initial value to be pulled low (off)
+GPIO.add_event_detect(23,GPIO.FALLING,callback=button_callback) # Setup event on pin 23 rising edge
 
-aa = A()  
 while True:
     pass
+
